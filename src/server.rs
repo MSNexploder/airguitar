@@ -1,4 +1,5 @@
-use crate::{Mdns, Shutdown};
+use crate::{Connection, Mdns, Shutdown};
+use rtsp_types::{Message, Method};
 use std::{future::Future, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -39,8 +40,14 @@ struct Listener {
 
 #[derive(Debug)]
 struct Handler {
-    // TODO
-    socket: TcpStream,
+    /// The TCP connection decorated with the redis protocol encoder / decoder
+    /// implemented using a buffered `TcpStream`.
+    ///
+    /// When `Listener` receives an inbound connection, the `TcpStream` is
+    /// passed to `Connection::new`, which initializes the associated buffers.
+    /// `Connection` allows the handler to operate at the "message" level and keep
+    /// the byte level protocol parsing details encapsulated in `Connection`.
+    connection: Connection,
 
     /// Listen for shutdown notifications.
     ///
@@ -154,11 +161,8 @@ impl Listener {
 
             // Create the necessary per-connection handler state.
             let mut handler = Handler {
-                socket: socket,
-                // TODO
-                // // Initialize the connection state. This allocates read/write
-                // // buffers to perform redis protocol frame parsing.
-                // connection: Connection::new(socket),
+                // Initialize the connection state.
+                connection: Connection::new(socket),
 
                 // Receive shutdown notifications.
                 shutdown: Shutdown::new(self.notify_shutdown.subscribe()),
@@ -215,16 +219,17 @@ impl Listener {
 impl Handler {
     /// Process a single connection.
     ///
-    /// Request frames are read from the socket and processed. Responses are
+    /// Request messages are read from the socket and processed. Responses are
     /// written back to the socket.
     ///
     /// When the shutdown signal is received, the connection is processed until
     /// it reaches a safe state, at which point it is terminated.
     async fn run(&mut self) -> crate::Result<()> {
         // As long as the shutdown signal has not been received, try to read a
-        // new request frame.
+        // new request message.
         while !self.shutdown.is_shutdown() {
-            tokio::select! {
+            let maybe_request = tokio::select! {
+                res = self.connection.read_message() => res?,
                 _ = self.shutdown.recv() => {
                     // If a shutdown signal is received, return from `run`.
                     // This will result in the task terminating.
@@ -232,7 +237,30 @@ impl Handler {
                 }
             };
 
-            // TODO
+            // If `None` is returned from `read_message()` then the peer closed
+            // the socket. There is no further work to do and the task can be
+            // terminated.
+            let request = match maybe_request {
+                Some(Message::Request(request)) => request,
+                Some(_) => unimplemented!(),
+                None => return Ok(()),
+            };
+
+            match request.method() {
+                Method::Describe => todo!(),
+                Method::GetParameter => todo!(),
+                Method::Options => todo!(),
+                Method::Pause => todo!(),
+                Method::Play => todo!(),
+                Method::PlayNotify => todo!(),
+                Method::Redirect => todo!(),
+                Method::Setup => todo!(),
+                Method::SetParameter => todo!(),
+                Method::Announce => todo!(),
+                Method::Record => todo!(),
+                Method::Teardown => todo!(),
+                Method::Extension(_) => todo!(),
+            }
         }
 
         Ok(())
