@@ -1,7 +1,10 @@
-use crate::Shutdown;
+use crate::{Configuration, Shutdown};
 use tokio::sync::mpsc;
 
 pub(crate) struct Mdns {
+    /// App configuration.
+    pub(crate) config: Configuration,
+
     /// Our advertised port.
     pub(crate) port: u16,
 
@@ -21,10 +24,17 @@ pub(crate) struct Mdns {
 
 impl Mdns {
     pub(crate) async fn run(&mut self) -> crate::Result<()> {
+        let hw_addr = self
+            .config
+            .hw_addr
+            .iter()
+            .map(|f| format!("{:02X}", f))
+            .collect::<String>();
+
         let (responder, task) = libmdns::Responder::with_default_handle()?;
         let _service = responder.register(
             "_raop._tcp".into(),
-            "3C22FBA5A3AD@Airguitar".into(),
+            format!("{}@{}", hw_addr, self.config.name),
             self.port,
             &[
                 "sf=0x4",
