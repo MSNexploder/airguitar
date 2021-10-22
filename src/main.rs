@@ -1,22 +1,43 @@
+mod connection;
+mod mdns;
+mod server;
+mod shutdown;
+
+use connection::Connection;
+use md5::{Digest, Md5};
+use mdns::Mdns;
+use shutdown::Shutdown;
 use tokio::{net::TcpListener, signal};
 
-mod server;
-
-mod connection;
-use connection::Connection;
-
-mod shutdown;
-use shutdown::Shutdown;
-
-mod mdns;
-use mdns::Mdns;
+#[derive(Clone, Debug)]
+pub(crate) struct Configuration {
+    port: u16,
+    name: String,
+    hw_addr: [u8; 6],
+}
 
 #[tokio::main]
 async fn main() -> crate::Result<()> {
-    let port = 0; // don't care for now
-    let listener = TcpListener::bind(&format!("0.0.0.0:{}", port)).await?;
+    let port = 0; // don't care atm
+    let name = "Airguitar";
+    let name_digest = Md5::digest(name.as_bytes());
 
-    server::run(listener, signal::ctrl_c()).await
+    let config = Configuration {
+        port: port,
+        name: name.into(),
+        hw_addr: [
+            name_digest[0],
+            name_digest[1],
+            name_digest[2],
+            name_digest[3],
+            name_digest[4],
+            name_digest[5],
+        ],
+    };
+
+    let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.port)).await?;
+
+    server::run(config, listener, signal::ctrl_c()).await
 }
 
 /// Error returned by most functions.

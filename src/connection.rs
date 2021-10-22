@@ -1,8 +1,9 @@
 use crate::Result;
 use bytes::{Buf, BytesMut};
-use rtsp_types::{Message, ParseError};
+use rtsp_types::{Message, ParseError, Response};
+use std::net::SocketAddr;
 use tokio::{
-    io::{AsyncReadExt, BufWriter},
+    io::{AsyncReadExt, AsyncWriteExt, BufWriter},
     net::TcpStream,
 };
 
@@ -27,17 +28,26 @@ pub(crate) struct Connection {
 
     // The buffer for reading messages.
     buffer: BytesMut,
+
+    pub(crate) local_addr: SocketAddr,
+    pub(crate) peer_addr: SocketAddr,
 }
 
 impl Connection {
     /// Create a new `Connection`, backed by `socket`. Read and write buffers
     /// are initialized.
-    pub fn new(socket: TcpStream) -> Connection {
-        Connection {
+    pub fn new(socket: TcpStream) -> Result<Connection> {
+        let local_addr = socket.local_addr()?;
+        let peer_addr = socket.peer_addr()?;
+
+        Ok(Connection {
             stream: BufWriter::new(socket),
             // Default to a 4KB read buffer.
             buffer: BytesMut::with_capacity(4 * 1024),
-        }
+
+            local_addr: local_addr,
+            peer_addr: peer_addr,
+        })
     }
 
     /// Read a single `Message` value from the underlying stream.
@@ -104,5 +114,28 @@ impl Connection {
             // in the connection being closed.
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// Write a single `Response` value to the underlying stream.
+    ///
+    /// The `Response` value is written to the socket using the various `write_*`
+    /// functions provided by `AsyncWrite`. Calling these functions directly on
+    /// a `TcpStream` is **not** advised, as this will result in a large number of
+    /// syscalls. However, it is fine to call these functions on a *buffered*
+    /// write stream. The data will be written to the buffer. Once the buffer is
+    /// full, it is flushed to the underlying socket.
+    pub async fn write_response<B: AsRef<[u8]>>(
+        &mut self,
+        response: &Response<B>,
+    ) -> crate::Result<()> {
+        let mut buffer = Vec::new();
+        response.write(&mut buffer)?;
+        self.stream.write_all(&buffer).await?;
+
+        // Ensure the encoded message is written to the socket. The calls above
+        // are to the buffered stream and writes. Calling `flush` writes the
+        // remaining contents of the buffer to the socket.
+        self.stream.flush().await?;
+        Ok(())
     }
 }

@@ -1,6 +1,9 @@
-use crate::{Connection, Mdns, Shutdown};
-use rtsp_types::{Message, Method};
-use std::{future::Future, time::Duration};
+use crate::{Configuration, Connection, Mdns, Shutdown};
+use base64ct::{Base64Unpadded, Encoding};
+use once_cell::sync::Lazy;
+use rsa::{pkcs1::FromRsaPrivateKey, PaddingScheme, RsaPrivateKey};
+use rtsp_types::{headers, HeaderName, Message, Method, Request, Response, StatusCode, Version};
+use std::{future::Future, net::IpAddr, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{broadcast, mpsc},
@@ -9,6 +12,9 @@ use tokio::{
 
 #[derive(Debug)]
 struct Listener {
+    /// App configuration.
+    config: Configuration,
+
     /// TCP listener supplied by the `run` caller.
     listener: TcpListener,
 
@@ -40,6 +46,9 @@ struct Listener {
 
 #[derive(Debug)]
 struct Handler {
+    /// App configuration.
+    config: Configuration,
+
     /// The TCP connection decorated with the redis protocol encoder / decoder
     /// implemented using a buffered `TcpStream`.
     ///
@@ -63,19 +72,25 @@ struct Handler {
     _shutdown_complete: mpsc::Sender<()>,
 }
 
-pub async fn run(listener: TcpListener, shutdown: impl Future) -> crate::Result<()> {
+pub(crate) async fn run(
+    config: Configuration,
+    listener: TcpListener,
+    shutdown: impl Future,
+) -> crate::Result<()> {
     let local_addr = listener.local_addr()?;
 
     let (notify_shutdown, _) = broadcast::channel(1);
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel(1);
 
     let mut mdns = Mdns {
+        config: config.clone(),
         port: local_addr.port(),
         shutdown: Shutdown::new(notify_shutdown.subscribe()),
         _shutdown_complete: shutdown_complete_tx.clone(),
     };
 
     let mut server = Listener {
+        config: config.clone(),
         listener,
         notify_shutdown,
         shutdown_complete_tx,
@@ -161,14 +176,15 @@ impl Listener {
 
             // Create the necessary per-connection handler state.
             let mut handler = Handler {
+                config: self.config.clone(),
+
                 // Initialize the connection state.
-                connection: Connection::new(socket),
+                connection: Connection::new(socket)?,
 
                 // Receive shutdown notifications.
                 shutdown: Shutdown::new(self.notify_shutdown.subscribe()),
 
-                // Notifies the receiver half once all clones are
-                // dropped.
+                // Notifies the receiver half once all clones are dropped.
                 _shutdown_complete: self.shutdown_complete_tx.clone(),
             };
 
@@ -242,27 +258,119 @@ impl Handler {
             // terminated.
             let request = match maybe_request {
                 Some(Message::Request(request)) => request,
-                Some(_) => unimplemented!(),
+                Some(_) => unreachable!(),
                 None => return Ok(()),
             };
 
-            match request.method() {
-                Method::Describe => todo!(),
-                Method::GetParameter => todo!(),
-                Method::Options => todo!(),
-                Method::Pause => todo!(),
-                Method::Play => todo!(),
-                Method::PlayNotify => todo!(),
-                Method::Redirect => todo!(),
-                Method::Setup => todo!(),
-                Method::SetParameter => todo!(),
-                Method::Announce => todo!(),
-                Method::Record => todo!(),
-                Method::Teardown => todo!(),
-                Method::Extension(_) => todo!(),
-            }
+            println!("{:?}", request);
+
+            self.execute(&request).await?
         }
 
         Ok(())
     }
+
+    async fn execute(&mut self, request: &Request<Vec<u8>>) -> crate::Result<()> {
+        let mut response_builder = Response::builder(Version::V1_0, StatusCode::Ok)
+            .header(headers::SERVER, "AirTunes/105.1"); // TODO check if we can use Airguitar here
+
+        if let Some(c_seq) = request.header(&headers::CSEQ) {
+            response_builder = response_builder.header(headers::CSEQ, c_seq.as_str());
+        }
+
+        if let Some(challenge) = request.header(&APPLE_CHALLENGE) {
+            let challenge = challenge.as_str();
+            let response = self.calculate_challenge(challenge)?;
+            response_builder = response_builder.header(APPLE_RESPONSE.clone(), response);
+        }
+
+        match request.method() {
+            Method::Describe => todo!(),
+            Method::GetParameter => todo!(),
+            Method::Options => {
+                response_builder = response_builder.header(headers::PUBLIC, "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER");
+                let response = response_builder.empty();
+                println!("{:?}", response);
+
+                self.connection.write_response(&response).await?;
+
+                Ok(())
+            }
+            Method::Pause => todo!(),
+            Method::Play => todo!(),
+            Method::PlayNotify => todo!(),
+            Method::Redirect => todo!(),
+            Method::Setup => todo!(),
+            Method::SetParameter => todo!(),
+            Method::Announce => todo!(),
+            Method::Record => todo!(),
+            Method::Teardown => todo!(),
+            Method::Extension(_) => todo!(),
+        }
+    }
+
+    fn calculate_challenge(&self, challenge: &str) -> crate::Result<String> {
+        // Apple sometimes uses padded Base64 (e.g. Music App on iOS)
+        // and sometimes removes the padding (e.g. Music App on macOS)
+        // ¯\_(ツ)_/¯
+        let actual_challenge = match challenge.find('=') {
+            Some(index) => &challenge[..index],
+            None => challenge,
+        };
+
+        let chall = Base64Unpadded::decode_vec(actual_challenge)?;
+        let addr = match self.connection.local_addr.ip() {
+            IpAddr::V4(ip) => ip.octets().to_vec(),
+            IpAddr::V6(ip) => ip.octets().to_vec(),
+        };
+        let hw_addr = self.config.hw_addr.to_vec();
+
+        let buf = [chall, addr, hw_addr].concat();
+        let padding = PaddingScheme::new_pkcs1v15_sign(None);
+
+        let challresp = RSA_KEY.sign(padding, &buf)?;
+        let encoded = Base64Unpadded::encode_string(&challresp);
+
+        Ok(encoded)
+    }
 }
+
+const APPLE_CHALLENGE: Lazy<HeaderName> = Lazy::new(|| {
+    HeaderName::from_static_str("Apple-Challenge").expect("HeaderName::from_static_str failed")
+});
+const APPLE_RESPONSE: Lazy<HeaderName> = Lazy::new(|| {
+    HeaderName::from_static_str("Apple-Response").expect("HeaderName::from_static_str failed")
+});
+const RSA_KEY: Lazy<RsaPrivateKey> = Lazy::new(|| {
+    let super_secret_key = concat!(
+        "-----BEGIN RSA PRIVATE KEY-----\n",
+        "MIIEpQIBAAKCAQEA59dE8qLieItsH1WgjrcFRKj6eUWqi+bGLOX1HL3U3GhC/j0Q\n",
+        "g90u3sG/1CUtwC5vOYvfDmFI6oSFXi5ELabWJmT2dKHzBJKa3k9ok+8t9ucRqMd6\n",
+        "DZHJ2YCCLlDRKSKv6kDqnw4UwPdpOMXziC/AMj3Z/lUVX1G7WSHCAWKf1zNS1eLv\n",
+        "qr+boEjXuBOitnZ/bDzPHrTOZz0Dew0uowxf/+sG+NCK3eQJVxqcaJ/vEHKIVd2M\n",
+        "+5qL71yJQ+87X6oV3eaYvt3zWZYD6z5vYTcrtij2VZ9Zmni/UAaHqn9JdsBWLUEp\n",
+        "VviYnhimNVvYFZeCXg/IdTQ+x4IRdiXNv5hEewIDAQABAoIBAQDl8Axy9XfWBLmk\n",
+        "zkEiqoSwF0PsmVrPzH9KsnwLGH+QZlvjWd8SWYGN7u1507HvhF5N3drJoVU3O14n\n",
+        "DY4TFQAaLlJ9VM35AApXaLyY1ERrN7u9ALKd2LUwYhM7Km539O4yUFYikE2nIPsc\n",
+        "EsA5ltpxOgUGCY7b7ez5NtD6nL1ZKauw7aNXmVAvmJTcuPxWmoktF3gDJKK2wxZu\n",
+        "NGcJE0uFQEG4Z3BrWP7yoNuSK3dii2jmlpPHr0O/KnPQtzI3eguhe0TwUem/eYSd\n",
+        "yzMyVx/YpwkzwtYL3sR5k0o9rKQLtvLzfAqdBxBurcizaaA/L0HIgAmOit1GJA2s\n",
+        "aMxTVPNhAoGBAPfgv1oeZxgxmotiCcMXFEQEWflzhWYTsXrhUIuz5jFua39GLS99\n",
+        "ZEErhLdrwj8rDDViRVJ5skOp9zFvlYAHs0xh92ji1E7V/ysnKBfsMrPkk5KSKPrn\n",
+        "jndMoPdevWnVkgJ5jxFuNgxkOLMuG9i53B4yMvDTCRiIPMQ++N2iLDaRAoGBAO9v\n",
+        "//mU8eVkQaoANf0ZoMjW8CN4xwWA2cSEIHkd9AfFkftuv8oyLDCG3ZAf0vrhrrtk\n",
+        "rfa7ef+AUb69DNggq4mHQAYBp7L+k5DKzJrKuO0r+R0YbY9pZD1+/g9dVt91d6LQ\n",
+        "NepUE/yY2PP5CNoFmjedpLHMOPFdVgqDzDFxU8hLAoGBANDrr7xAJbqBjHVwIzQ4\n",
+        "To9pb4BNeqDndk5Qe7fT3+/H1njGaC0/rXE0Qb7q5ySgnsCb3DvAcJyRM9SJ7OKl\n",
+        "Gt0FMSdJD5KG0XPIpAVNwgpXXH5MDJg09KHeh0kXo+QA6viFBi21y340NonnEfdf\n",
+        "54PX4ZGS/Xac1UK+pLkBB+zRAoGAf0AY3H3qKS2lMEI4bzEFoHeK3G895pDaK3TF\n",
+        "BVmD7fV0Zhov17fegFPMwOII8MisYm9ZfT2Z0s5Ro3s5rkt+nvLAdfC/PYPKzTLa\n",
+        "lpGSwomSNYJcB9HNMlmhkGzc1JnLYT4iyUyx6pcZBmCd8bD0iwY/FzcgNDaUmbX9\n",
+        "+XDvRA0CgYEAkE7pIPlE71qvfJQgoA9em0gILAuE4Pu13aKiJnfft7hIjbK+5kyb\n",
+        "3TysZvoyDnb3HOKvInK7vXbKuU4ISgxB2bB3HcYzQMGsz1qJ2gG0N5hvJpzwwhbh\n",
+        "XqFKA4zaaSrw622wDniAK5MlIE0tIAKKP4yxNGjoD2QYjhBGuhvkWKY=\n",
+        "-----END RSA PRIVATE KEY-----",
+    );
+
+    RsaPrivateKey::from_pkcs1_pem(super_secret_key).expect("RsaPrivateKey::from_pkcs1_pem failed")
+});
