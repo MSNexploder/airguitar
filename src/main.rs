@@ -8,16 +8,12 @@ use md5::{Digest, Md5};
 use mdns::Mdns;
 use shutdown::Shutdown;
 use tokio::{net::TcpListener, signal};
-
-#[derive(Clone, Debug)]
-pub(crate) struct Configuration {
-    port: u16,
-    name: String,
-    hw_addr: [u8; 6],
-}
+use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> crate::Result<()> {
+    tracing_subscriber::fmt::try_init()?;
+
     let port = 0; // don't care atm
     let name = "Airguitar";
     let name_digest = Md5::digest(name.as_bytes());
@@ -40,6 +36,13 @@ async fn main() -> crate::Result<()> {
     server::run(config, listener, signal::ctrl_c()).await
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct Configuration {
+    port: u16,
+    name: String,
+    hw_addr: [u8; 6],
+}
+
 /// Error returned by most functions.
 ///
 /// Maybe consider a specialized error handling crate or defining an error
@@ -51,6 +54,6 @@ async fn main() -> crate::Result<()> {
 /// and handled during normal execution when a partial message is received on a
 /// socket. `std::error::Error` is implemented for `parse::Error` which allows
 /// it to be converted to `Box<dyn std::error::Error>`.
-pub type Error = Box<dyn std::error::Error + Send + Sync>;
+pub(crate) type Error = Box<dyn std::error::Error + Send + Sync>;
 
 pub(crate) type Result<T> = std::result::Result<T, Error>;
