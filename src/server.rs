@@ -9,6 +9,7 @@ use tokio::{
     sync::{broadcast, mpsc},
     time,
 };
+use tracing::{debug, error, info, instrument};
 
 #[derive(Debug)]
 struct Listener {
@@ -97,7 +98,7 @@ pub(crate) async fn run(
         shutdown_complete_rx,
     };
 
-    println!("Lets rock on {}!", local_addr);
+    info!("Lets rock on {}!", local_addr);
 
     tokio::select! {
       res = server.run() => {
@@ -107,19 +108,20 @@ pub(crate) async fn run(
           //
           // Errors encountered when handling individual connections do not
           // bubble up to this point.
-          if let Err(_err) = res {
-              // TODO error logging
+          if let Err(err) = res {
+            error!(cause = %err, "failed to accept");
           }
       },
       res = mdns.run() => {
         // If an error is received here, something happend while sending
         // mdns advertisements
-          if let Err(_err) = res {
-            // TODO error logging
+        if let Err(err) = res {
+          error!(cause = %err, "mdns failed");
         }
       },
       _ = shutdown => {
           // The shutdown signal has been received.
+          info!("shutting down");
       },
     }
 
@@ -192,8 +194,8 @@ impl Listener {
             // asynchronous green threads and are executed concurrently.
             tokio::spawn(async move {
                 // Process the connection. If an error is encountered, log it.
-                if let Err(_err) = handler.run().await {
-                    // TODO error logging
+                if let Err(err) = handler.run().await {
+                    error!(cause = ?err, "connection error");
                 }
             });
         }
@@ -240,6 +242,7 @@ impl Handler {
     ///
     /// When the shutdown signal is received, the connection is processed until
     /// it reaches a safe state, at which point it is terminated.
+    #[instrument]
     async fn run(&mut self) -> crate::Result<()> {
         // As long as the shutdown signal has not been received, try to read a
         // new request message.
@@ -262,7 +265,7 @@ impl Handler {
                 None => return Ok(()),
             };
 
-            println!("{:?}", request);
+            debug!("{:?}", request);
 
             self.execute(&request).await?
         }
@@ -290,7 +293,7 @@ impl Handler {
             Method::Options => {
                 response_builder = response_builder.header(headers::PUBLIC, "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER");
                 let response = response_builder.empty();
-                println!("{:?}", response);
+                debug!("{:?}", response);
 
                 self.connection.write_response(&response).await?;
 
