@@ -7,6 +7,7 @@ use connection::Connection;
 use md5::{Digest, Md5};
 use mdns::Mdns;
 use shutdown::Shutdown;
+use std::sync::Arc;
 use tokio::{net::TcpListener, signal};
 use tracing_subscriber;
 
@@ -33,10 +34,10 @@ async fn main() -> crate::Result<()> {
 
     let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.port)).await?;
 
-    server::run(config, listener, signal::ctrl_c()).await
+    server::run(Arc::new(config), listener, signal::ctrl_c()).await
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct Configuration {
     port: u16,
     name: String,

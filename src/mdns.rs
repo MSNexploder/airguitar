@@ -1,9 +1,10 @@
 use crate::{Configuration, Shutdown};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub(crate) struct Mdns {
     /// App configuration.
-    pub(crate) config: Configuration,
+    pub(crate) config: Arc<Configuration>,
 
     /// Our advertised port.
     pub(crate) port: u16,

@@ -3,7 +3,7 @@ use base64ct::{Base64Unpadded, Encoding};
 use once_cell::sync::Lazy;
 use rsa::{pkcs1::FromRsaPrivateKey, PaddingScheme, RsaPrivateKey};
 use rtsp_types::{headers, HeaderName, Message, Method, Request, Response, StatusCode, Version};
-use std::{future::Future, net::IpAddr, time::Duration};
+use std::{future::Future, net::IpAddr, sync::Arc, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{broadcast, mpsc},
@@ -14,7 +14,7 @@ use tracing::{debug, error, info, instrument};
 #[derive(Debug)]
 struct Listener {
     /// App configuration.
-    config: Configuration,
+    config: Arc<Configuration>,
 
     /// TCP listener supplied by the `run` caller.
     listener: TcpListener,
@@ -48,7 +48,7 @@ struct Listener {
 #[derive(Debug)]
 struct Handler {
     /// App configuration.
-    config: Configuration,
+    config: Arc<Configuration>,
 
     /// The TCP connection decorated with the redis protocol encoder / decoder
     /// implemented using a buffered `TcpStream`.
@@ -74,7 +74,7 @@ struct Handler {
 }
 
 pub(crate) async fn run(
-    config: Configuration,
+    config: Arc<Configuration>,
     listener: TcpListener,
     shutdown: impl Future,
 ) -> crate::Result<()> {
