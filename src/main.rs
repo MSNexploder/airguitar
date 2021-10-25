@@ -1,13 +1,11 @@
-mod connection;
+mod base64;
 mod mdns;
 mod player;
+mod rtsp;
 mod server;
 mod shutdown;
 
-use connection::Connection;
 use md5::{Digest, Md5};
-use mdns::Mdns;
-use shutdown::Shutdown;
 use std::sync::Arc;
 use tokio::{net::TcpListener, signal};
 use tracing_subscriber;

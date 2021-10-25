@@ -1,4 +1,4 @@
-use crate::{Result, Shutdown};
+use crate::{shutdown::Shutdown, Result};
 use std::net::{IpAddr, SocketAddr};
 use tokio::{
     net::UdpSocket,
