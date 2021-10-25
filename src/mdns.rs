@@ -1,4 +1,4 @@
-use crate::{Configuration, Shutdown};
+use crate::{shutdown::Shutdown, Configuration};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
