@@ -1,5 +1,6 @@
 mod connection;
 mod mdns;
+mod player;
 mod server;
 mod shutdown;
 

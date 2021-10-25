@@ -1,15 +1,24 @@
-use crate::{Configuration, Connection, Mdns, Shutdown};
+use crate::{
+    player::{Announce, Command, Encryption, Player, Setup},
+    Configuration, Connection, Mdns, Shutdown,
+};
 use base64ct::{Base64Unpadded, Encoding};
 use once_cell::sync::Lazy;
 use rsa::{pkcs1::FromRsaPrivateKey, PaddingScheme, RsaPrivateKey};
-use rtsp_types::{headers, HeaderName, Message, Method, Request, Response, StatusCode, Version};
-use std::{future::Future, net::IpAddr, sync::Arc, time::Duration};
+use rtsp_types::{
+    headers::{
+        self, RtpLowerTransport, RtpProfile, RtpTransport, RtpTransportParameters, Transport,
+        TransportMode, Transports,
+    },
+    HeaderName, Message, Method, Request, Response, ResponseBuilder, StatusCode, Version,
+};
+use std::{collections::BTreeMap, future::Future, net::IpAddr, str, sync::Arc, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, oneshot},
     time,
 };
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, trace};
 
 #[derive(Debug)]
 struct Listener {
@@ -18,6 +27,9 @@ struct Listener {
 
     /// TCP listener supplied by the `run` caller.
     listener: TcpListener,
+
+    /// Used to control our Player
+    player_tx: mpsc::Sender<Command>,
 
     /// Broadcasts a shutdown signal to all active connections.
     ///
@@ -59,6 +71,9 @@ struct Handler {
     /// the byte level protocol parsing details encapsulated in `Connection`.
     connection: Connection,
 
+    /// Used to control our Player
+    player_tx: mpsc::Sender<Command>,
+
     /// Listen for shutdown notifications.
     ///
     /// A wrapper around the `broadcast::Receiver` paired with the sender in
@@ -82,6 +97,7 @@ pub(crate) async fn run(
 
     let (notify_shutdown, _) = broadcast::channel(1);
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel(1);
+    let (player_tx, player_rx) = mpsc::channel(4);
 
     let mut mdns = Mdns {
         config: config.clone(),
@@ -90,9 +106,16 @@ pub(crate) async fn run(
         _shutdown_complete: shutdown_complete_tx.clone(),
     };
 
+    let mut player = Player {
+        receiver: player_rx,
+        shutdown: Shutdown::new(notify_shutdown.subscribe()),
+        _shutdown_complete: shutdown_complete_tx.clone(),
+    };
+
     let mut server = Listener {
         config: config.clone(),
         listener,
+        player_tx,
         notify_shutdown,
         shutdown_complete_tx,
         shutdown_complete_rx,
@@ -119,6 +142,12 @@ pub(crate) async fn run(
           error!(cause = %err, "mdns failed");
         }
       },
+      res = player.run() => {
+        // If an error is received here, something happend while playing
+        if let Err(err) = res {
+          error!(cause = %err, "player failed");
+        }
+      }
       _ = shutdown => {
           // The shutdown signal has been received.
           info!("shutting down");
@@ -135,7 +164,8 @@ pub(crate) async fn run(
         ..
     } = server;
 
-    // Explicitly drop Mdns handler allowing a clean exit.
+    // Explicitly drop Mdns and Player allowing a clean exit.
+    drop(player);
     drop(mdns);
 
     // When `notify_shutdown` is dropped, all tasks which have `subscribe`d will
@@ -182,6 +212,8 @@ impl Listener {
 
                 // Initialize the connection state.
                 connection: Connection::new(socket)?,
+
+                player_tx: self.player_tx.clone(),
 
                 // Receive shutdown notifications.
                 shutdown: Shutdown::new(self.notify_shutdown.subscribe()),
@@ -242,7 +274,7 @@ impl Handler {
     ///
     /// When the shutdown signal is received, the connection is processed until
     /// it reaches a safe state, at which point it is terminated.
-    #[instrument]
+    #[instrument(skip(self))]
     async fn run(&mut self) -> crate::Result<()> {
         // As long as the shutdown signal has not been received, try to read a
         // new request message.
@@ -265,7 +297,7 @@ impl Handler {
                 None => return Ok(()),
             };
 
-            debug!("{:?}", request);
+            trace!("{:?}", request);
 
             self.execute(&request).await?
         }
@@ -273,9 +305,263 @@ impl Handler {
         Ok(())
     }
 
+    // TODO on error we should send send a response anyways (e.g. with status code ParameterNotUnderstood)
     async fn execute(&mut self, request: &Request<Vec<u8>>) -> crate::Result<()> {
-        let mut response_builder = Response::builder(Version::V1_0, StatusCode::Ok)
-            .header(headers::SERVER, "AirTunes/105.1"); // TODO check if we can use Airguitar here
+        match request.method() {
+            Method::Describe => todo!(),
+            Method::GetParameter => todo!(),
+            Method::Options => {
+                let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
+                let response = self.add_default_headers(request, response_builder)?
+                  .header(headers::PUBLIC, "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER")
+                  .empty();
+
+                trace!("{:?}", response);
+
+                self.connection.write_response(&response).await?;
+                Ok(())
+            }
+            Method::Pause => todo!(),
+            Method::Play => todo!(),
+            Method::PlayNotify => todo!(),
+            Method::Redirect => todo!(),
+            Method::Setup => {
+                let transports = request
+                    .header(&headers::TRANSPORT)
+                    .map(|x| {
+                        // TODO fix parsing failure / wrong data for rtsp types parsing
+                        // not sure who's wrong on this one
+                        // let transports = request.typed_header::<Transports>(); <-- should be enough
+                        x.as_str().replace("mode=record", "mode=\"RECORD\"")
+                    })
+                    .map(|x| {
+                        Request::builder(Method::Setup, Version::V1_0)
+                            .header(headers::TRANSPORT, x)
+                            .empty()
+                    })
+                    .map(|x| x.typed_header::<Transports>().ok().flatten())
+                    .flatten();
+                let transport = transports.as_ref().map(|x| x.first()).flatten();
+
+                let ports = match transport {
+                    Some(Transport::Rtp(rtp)) => {
+                        let params = &rtp.params.others;
+                        let maybe_control_port = params
+                            .get("control_port")
+                            .map(|x| x.as_ref())
+                            .flatten()
+                            .map(|x| x.parse().ok())
+                            .flatten();
+                        let maybe_timing_port = params
+                            .get("timing_port")
+                            .map(|x| x.as_ref())
+                            .flatten()
+                            .map(|x| x.parse().ok())
+                            .flatten();
+
+                        if let (Some(control_port), Some(timing_port)) =
+                            (maybe_control_port, maybe_timing_port)
+                        {
+                            Some((control_port, timing_port))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+
+                if let Some((control_port, timing_port)) = ports {
+                    let setup = Setup {
+                        ip: self.connection.peer_addr.ip(),
+                        control_port: control_port,
+                        timing_port: timing_port,
+                    };
+
+                    let (tx, rx) = oneshot::channel();
+                    self.player_tx
+                        .send(Command::Setup {
+                            payload: setup,
+                            resp: tx,
+                        })
+                        .await?;
+                    let success = rx.await?;
+
+                    let response_builder = match success {
+                        Ok(res) => {
+                            let mut others = BTreeMap::new();
+                            others.insert(
+                                "control_port".into(),
+                                Some(format!("{}", res.control_port)),
+                            );
+                            others
+                                .insert("timing_port".into(), Some(format!("{}", res.timing_port)));
+
+                            let transport = Transport::Rtp(RtpTransport {
+                                profile: RtpProfile::Avp,
+                                lower_transport: Some(RtpLowerTransport::Udp),
+                                params: RtpTransportParameters {
+                                    unicast: true,
+                                    multicast: false,
+                                    server_port: Some((res.server_port, None)),
+                                    interleaved: Some((0, Some(1))),
+                                    mode: vec![TransportMode::Record],
+                                    others: others,
+                                    ..Default::default()
+                                },
+                            });
+                            let transports: Transports = vec![transport].into();
+
+                            Response::builder(Version::V1_0, StatusCode::Ok)
+                                .header(headers::SESSION, "1")
+                                .typed_header(&transports)
+                        }
+                        Err(_) => {
+                            Response::builder(Version::V1_0, StatusCode::ParameterNotUnderstood)
+                        }
+                    };
+                    let response = self.add_default_headers(request, response_builder)?.empty();
+
+                    trace!("{:?}", response);
+                    self.connection.write_response(&response).await?;
+                }
+
+                Ok(())
+            }
+            Method::SetParameter => {
+                let body = request.body();
+                debug!("{:?}", str::from_utf8(body));
+
+                let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
+                let response = self.add_default_headers(request, response_builder)?.empty();
+
+                trace!("{:?}", response);
+                self.connection.write_response(&response).await?;
+
+                Ok(())
+            }
+            Method::Announce => {
+                let sdp = sdp_types::Session::parse(&request.body())?;
+                trace!("{:?}", sdp);
+
+                let media = sdp
+                    .medias
+                    .first()
+                    .ok_or_else(|| "missing media description")?;
+
+                let fmtp = media
+                    .get_first_attribute_value("fmtp")?
+                    .ok_or_else(|| "missing fmtp")?
+                    .into();
+
+                let minimum_latency = media
+                    .get_first_attribute_value("min-latency")
+                    .unwrap_or_else(|_| None)
+                    .map(|x| x.parse().ok())
+                    .flatten()
+                    .unwrap_or_else(|| 0);
+
+                let maximum_latency = media
+                    .get_first_attribute_value("max-latency")
+                    .unwrap_or_else(|_| None)
+                    .map(|x| x.parse().ok())
+                    .flatten()
+                    .unwrap_or_else(|| 0);
+
+                let aesiv = media
+                    .get_first_attribute_value("aesiv")
+                    .unwrap_or_else(|_| None)
+                    .map(|x| decode_base64(x).ok())
+                    .flatten();
+
+                let aeskey = media
+                    .get_first_attribute_value("rsaaeskey")
+                    .unwrap_or_else(|_| None)
+                    .map(|x| decode_base64(x).ok())
+                    .flatten()
+                    .map(|x| {
+                        let padding = PaddingScheme::new_pkcs1v15_encrypt();
+                        RSA_KEY.decrypt(padding, &x).ok()
+                    })
+                    .flatten();
+
+                let encryption = if let (Some(aesiv), Some(aeskey)) = (aesiv, aeskey) {
+                    Some(Encryption {
+                        aesiv: aesiv,
+                        aeskey: aeskey,
+                    })
+                } else {
+                    None
+                };
+
+                let announce = Announce {
+                    fmtp: fmtp,
+                    minimum_latency: minimum_latency,
+                    maximum_latency: maximum_latency,
+                    encryption: encryption,
+                };
+
+                let (tx, rx) = oneshot::channel();
+                self.player_tx
+                    .send(Command::Announce {
+                        payload: announce,
+                        resp: tx,
+                    })
+                    .await?;
+                let success = rx.await?;
+
+                let response_builder = if success.is_ok() {
+                    Response::builder(Version::V1_0, StatusCode::Ok)
+                } else {
+                    Response::builder(Version::V1_0, StatusCode::NotEnoughBandwidth)
+                };
+                let response = self.add_default_headers(request, response_builder)?.empty();
+
+                trace!("{:?}", response);
+                self.connection.write_response(&response).await?;
+
+                Ok(())
+            }
+            Method::Record => {
+                let response_builder = Response::builder(Version::V1_0, StatusCode::Ok)
+                    .header(AUDIO_LATENCY.clone(), "11025");
+
+                let response = self.add_default_headers(request, response_builder)?.empty();
+
+                trace!("{:?}", response);
+                self.connection.write_response(&response).await?;
+
+                Ok(())
+            }
+            Method::Teardown => {
+                let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
+                let response = self.add_default_headers(request, response_builder)?.empty();
+
+                trace!("{:?}", response);
+                self.connection.write_response(&response).await?;
+
+                Ok(())
+            }
+            Method::Extension(extension) => match extension.as_str() {
+                "FLUSH" | "flush" => {
+                    let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
+                    let response = self.add_default_headers(request, response_builder)?.empty();
+
+                    trace!("{:?}", response);
+                    self.connection.write_response(&response).await?;
+
+                    Ok(())
+                }
+                _ => todo!(),
+            },
+        }
+    }
+
+    fn add_default_headers(
+        &self,
+        request: &Request<Vec<u8>>,
+        mut response_builder: ResponseBuilder,
+    ) -> crate::Result<ResponseBuilder> {
+        response_builder = response_builder.header(headers::SERVER, "AirTunes/105.1"); // TODO check if we can use Airguitar here
 
         if let Some(c_seq) = request.header(&headers::CSEQ) {
             response_builder = response_builder.header(headers::CSEQ, c_seq.as_str());
@@ -287,41 +573,11 @@ impl Handler {
             response_builder = response_builder.header(APPLE_RESPONSE.clone(), response);
         }
 
-        match request.method() {
-            Method::Describe => todo!(),
-            Method::GetParameter => todo!(),
-            Method::Options => {
-                response_builder = response_builder.header(headers::PUBLIC, "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER");
-                let response = response_builder.empty();
-                debug!("{:?}", response);
-
-                self.connection.write_response(&response).await?;
-
-                Ok(())
-            }
-            Method::Pause => todo!(),
-            Method::Play => todo!(),
-            Method::PlayNotify => todo!(),
-            Method::Redirect => todo!(),
-            Method::Setup => todo!(),
-            Method::SetParameter => todo!(),
-            Method::Announce => todo!(),
-            Method::Record => todo!(),
-            Method::Teardown => todo!(),
-            Method::Extension(_) => todo!(),
-        }
+        Ok(response_builder)
     }
 
     fn calculate_challenge(&self, challenge: &str) -> crate::Result<String> {
-        // Apple sometimes uses padded Base64 (e.g. Music App on iOS)
-        // and sometimes removes the padding (e.g. Music App on macOS)
-        // ¯\_(ツ)_/¯
-        let actual_challenge = match challenge.find('=') {
-            Some(index) => &challenge[..index],
-            None => challenge,
-        };
-
-        let chall = Base64Unpadded::decode_vec(actual_challenge)?;
+        let chall = decode_base64(challenge)?;
         let addr = match self.connection.local_addr.ip() {
             IpAddr::V4(ip) => ip.octets().to_vec(),
             IpAddr::V6(ip) => ip.octets().to_vec(),
@@ -332,10 +588,27 @@ impl Handler {
         let padding = PaddingScheme::new_pkcs1v15_sign(None);
 
         let challresp = RSA_KEY.sign(padding, &buf)?;
-        let encoded = Base64Unpadded::encode_string(&challresp);
+        let encoded = encode_base64(&challresp);
 
         Ok(encoded)
     }
+}
+
+fn decode_base64(input: &str) -> crate::Result<Vec<u8>> {
+    // Apple sometimes uses padded Base64 (e.g. Music App on iOS)
+    // and sometimes removes the padding (e.g. Music App on macOS)
+    // ¯\_(ツ)_/¯
+    let actual_input = match input.find('=') {
+        Some(index) => &input[..index],
+        None => input,
+    };
+
+    let val = Base64Unpadded::decode_vec(actual_input)?;
+    Ok(val)
+}
+
+fn encode_base64(input: &[u8]) -> String {
+    Base64Unpadded::encode_string(input)
 }
 
 const APPLE_CHALLENGE: Lazy<HeaderName> = Lazy::new(|| {
@@ -343,6 +616,9 @@ const APPLE_CHALLENGE: Lazy<HeaderName> = Lazy::new(|| {
 });
 const APPLE_RESPONSE: Lazy<HeaderName> = Lazy::new(|| {
     HeaderName::from_static_str("Apple-Response").expect("HeaderName::from_static_str failed")
+});
+const AUDIO_LATENCY: Lazy<HeaderName> = Lazy::new(|| {
+    HeaderName::from_static_str("Audio-Latency").expect("HeaderName::from_static_str failed")
 });
 const RSA_KEY: Lazy<RsaPrivateKey> = Lazy::new(|| {
     let super_secret_key = concat!(
