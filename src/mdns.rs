@@ -53,7 +53,7 @@ impl Mdns {
                 "cn=0,1",
                 "ch=2",
                 "txtvers=1",
-                "pw=true",
+                "pw=false",
             ],
         );
 

@@ -14,6 +14,7 @@ use rtsp_types::{
     },
     HeaderName, Message, Method, Request, Response, ResponseBuilder, StatusCode, Version,
 };
+use sha1::Sha1;
 use std::{collections::BTreeMap, net::IpAddr, str, sync::Arc};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, instrument, trace};
@@ -233,8 +234,13 @@ impl Handler {
 
                 let fmtp = media
                     .get_first_attribute_value("fmtp")?
-                    .ok_or_else(|| "missing fmtp")?
-                    .into();
+                    .map({
+                        |x| match x.find(char::is_whitespace) {
+                            Some(index) => x[index..].into(),
+                            None => x.into(),
+                        }
+                    })
+                    .ok_or_else(|| "missing fmtp")?;
 
                 let minimum_latency = media
                     .get_first_attribute_value("min-latency")
@@ -262,7 +268,7 @@ impl Handler {
                     .map(|x| decode_base64(x).ok())
                     .flatten()
                     .map(|x| {
-                        let padding = PaddingScheme::new_pkcs1v15_encrypt();
+                        let padding = PaddingScheme::new_oaep::<Sha1>();
                         RSA_KEY.decrypt(padding, &x).ok()
                     })
                     .flatten();
@@ -307,7 +313,6 @@ impl Handler {
             Method::Record => {
                 let response_builder = Response::builder(Version::V1_0, StatusCode::Ok)
                     .header(AUDIO_LATENCY.clone(), "11025");
-
                 let response = self.add_default_headers(request, response_builder)?.empty();
 
                 trace!("{:?}", response);
@@ -316,8 +321,13 @@ impl Handler {
                 Ok(())
             }
             Method::Teardown => {
-                let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
+                let response_builder = Response::builder(Version::V1_0, StatusCode::Ok)
+                    .header(headers::CONNECTION, "close");
                 let response = self.add_default_headers(request, response_builder)?.empty();
+
+                let (tx, rx) = oneshot::channel();
+                self.player_tx.send(Command::Teardown { resp: tx }).await?;
+                let _ = rx.await?;
 
                 trace!("{:?}", response);
                 self.connection.write_response(&response).await?;
