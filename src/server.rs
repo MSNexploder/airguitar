@@ -27,7 +27,8 @@ pub(crate) async fn run(
     };
 
     let mut player = Player {
-        receiver: player_rx,
+        player_tx: player_tx.clone(),
+        player_rx: player_rx,
         shutdown: Shutdown::new(notify_shutdown.subscribe()),
         _shutdown_complete: shutdown_complete_tx.clone(),
     };
@@ -35,7 +36,7 @@ pub(crate) async fn run(
     let mut server = Listener {
         config: config.clone(),
         listener,
-        player_tx,
+        player_tx: player_tx.clone(),
         notify_shutdown,
         shutdown_complete_tx,
         shutdown_complete_rx,
