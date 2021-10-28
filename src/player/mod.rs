@@ -17,6 +17,7 @@ use block_modes::{
     block_padding::{Padding, ZeroPadding},
     BlockMode, Cbc,
 };
+use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
 use rtp_rs::Seq;
 use std::{
     net::{IpAddr, SocketAddr},
@@ -105,6 +106,9 @@ impl Player {
         let mut encryption: Option<Encryption> = None;
         let mut cipher: Option<Aes128> = None;
         let mut alac: Option<Decoder> = None;
+
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+        let sink = Sink::try_new(&stream_handle).unwrap();
 
         while !self.shutdown.is_shutdown() {
             let maybe_request = tokio::select! {
@@ -242,6 +246,16 @@ impl Player {
                                 let result = decoder.decode_packet(&result, &mut out).unwrap();
 
                                 trace!("decoded: {:?} - {:?}", seq, result);
+
+                                let source = SamplesBuffer::new(
+                                    2,
+                                    44100,
+                                    result
+                                        .iter()
+                                        .map(|i| (i >> 16) as i16)
+                                        .collect::<Vec<i16>>(),
+                                );
+                                sink.append(source);
                             }
                             None => todo!(),
                         }
