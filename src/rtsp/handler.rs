@@ -92,23 +92,15 @@ impl Handler {
     // TODO on error we should send send a response anyways (e.g. with status code ParameterNotUnderstood)
     async fn execute(&mut self, request: &Request<Vec<u8>>) -> crate::Result<()> {
         match request.method() {
-            Method::Describe => todo!(),
-            Method::GetParameter => todo!(),
             Method::Options => {
                 let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
                 let response = self.add_default_headers(request, response_builder)?
                 .header(headers::PUBLIC, "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER")
                 .empty();
 
-                trace!("{:?}", response);
-
                 self.connection.write_response(&response).await?;
                 Ok(())
             }
-            Method::Pause => todo!(),
-            Method::Play => todo!(),
-            Method::PlayNotify => todo!(),
-            Method::Redirect => todo!(),
             Method::Setup => {
                 let transports = request
                     .header(&headers::TRANSPORT)
@@ -205,10 +197,16 @@ impl Handler {
                     };
                     let response = self.add_default_headers(request, response_builder)?.empty();
 
-                    trace!("{:?}", response);
                     self.connection.write_response(&response).await?;
                 }
 
+                Ok(())
+            }
+            Method::GetParameter => {
+                let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
+                let response = self.add_default_headers(request, response_builder)?.empty();
+
+                self.connection.write_response(&response).await?;
                 Ok(())
             }
             Method::SetParameter => {
@@ -218,9 +216,7 @@ impl Handler {
                 let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
                 let response = self.add_default_headers(request, response_builder)?.empty();
 
-                trace!("{:?}", response);
                 self.connection.write_response(&response).await?;
-
                 Ok(())
             }
             Method::Announce => {
@@ -305,9 +301,7 @@ impl Handler {
                 };
                 let response = self.add_default_headers(request, response_builder)?.empty();
 
-                trace!("{:?}", response);
                 self.connection.write_response(&response).await?;
-
                 Ok(())
             }
             Method::Record => {
@@ -315,9 +309,7 @@ impl Handler {
                     .header(AUDIO_LATENCY.clone(), "11025");
                 let response = self.add_default_headers(request, response_builder)?.empty();
 
-                trace!("{:?}", response);
                 self.connection.write_response(&response).await?;
-
                 Ok(())
             }
             Method::Teardown => {
@@ -329,9 +321,7 @@ impl Handler {
                 self.player_tx.send(Command::Teardown { resp: tx }).await?;
                 let _ = rx.await?;
 
-                trace!("{:?}", response);
                 self.connection.write_response(&response).await?;
-
                 Ok(())
             }
             Method::Extension(extension) => match extension.as_str() {
@@ -339,13 +329,23 @@ impl Handler {
                     let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
                     let response = self.add_default_headers(request, response_builder)?.empty();
 
-                    trace!("{:?}", response);
                     self.connection.write_response(&response).await?;
-
                     Ok(())
                 }
                 _ => todo!(),
             },
+
+            Method::Describe
+            | Method::Pause
+            | Method::Play
+            | Method::PlayNotify
+            | Method::Redirect => {
+                let response =
+                    Response::builder(Version::V1_0, StatusCode::MethodNotAllowed).empty();
+
+                self.connection.write_response(&response).await?;
+                Ok(())
+            }
         }
     }
 

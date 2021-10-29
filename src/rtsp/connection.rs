@@ -1,11 +1,12 @@
 use crate::Result;
 use bytes::{Buf, BytesMut};
 use rtsp_types::{Message, ParseError, Response};
-use std::net::SocketAddr;
+use std::{fmt::Debug, net::SocketAddr};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufWriter},
     net::TcpStream,
 };
+use tracing::trace;
 
 /// Send and receive `Message` values from a remote peer.
 ///
@@ -124,10 +125,12 @@ impl Connection {
     /// syscalls. However, it is fine to call these functions on a *buffered*
     /// write stream. The data will be written to the buffer. Once the buffer is
     /// full, it is flushed to the underlying socket.
-    pub async fn write_response<B: AsRef<[u8]>>(
+    pub async fn write_response<B: AsRef<[u8]> + Debug>(
         &mut self,
         response: &Response<B>,
     ) -> crate::Result<()> {
+        trace!("{:?}", response);
+
         let mut buffer = Vec::new();
         response.write(&mut buffer)?;
         self.stream.write_all(&buffer).await?;
