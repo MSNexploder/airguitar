@@ -17,7 +17,7 @@ use rtsp_types::{
 use sha1::Sha1;
 use std::{collections::BTreeMap, net::IpAddr, str, sync::Arc};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, instrument, trace};
+use tracing::{instrument, trace};
 
 #[derive(Debug)]
 pub(crate) struct Handler {
@@ -203,18 +203,64 @@ impl Handler {
                 Ok(())
             }
             Method::GetParameter => {
-                let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
-                let response = self.add_default_headers(request, response_builder)?.empty();
+                let response_builder = self.add_default_headers(
+                    request,
+                    Response::builder(Version::V1_0, StatusCode::Ok),
+                )?;
 
-                self.connection.write_response(&response).await?;
+                let (tx, rx) = oneshot::channel();
+                self.player_tx
+                    .send(Command::GetParameter { resp: tx })
+                    .await?;
+                let parameters = rx.await?;
+
+                let body = str::from_utf8(request.body())?
+                    .lines()
+                    .filter_map({
+                        |line| match line {
+                            "volume" => Some(format!("volume: {:.6}", parameters.volume)),
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\r\n");
+
+                if body.is_empty() {
+                    let response = response_builder.empty();
+                    self.connection.write_response(&response).await?;
+                } else {
+                    let response = response_builder.build(body);
+                    self.connection.write_response(&response).await?;
+                }
+
                 Ok(())
             }
             Method::SetParameter => {
-                let body = request.body();
-                debug!("{:?}", str::from_utf8(body));
+                let response = match request.header(&headers::CONTENT_TYPE).map(|x| x.as_str()) {
+                    Some("text/parameters") => {
+                        // TODO build proper text/parameters parser
+                        for line in str::from_utf8(request.body())?.lines() {
+                            match line.split_once(":") {
+                                Some(("volume", volume)) => {
+                                    let vol = volume.trim().parse::<f64>()?;
+                                    self.player_tx
+                                        .send(Command::SetParameter { volume: vol })
+                                        .await?;
+                                }
+                                _ => {}
+                            }
+                        }
 
-                let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
-                let response = self.add_default_headers(request, response_builder)?.empty();
+                        self.add_default_headers(
+                            request,
+                            Response::builder(Version::V1_0, StatusCode::Ok),
+                        )?
+                        .empty()
+                    }
+                    _ => {
+                        Response::builder(Version::V1_0, StatusCode::ParameterNotUnderstood).empty()
+                    }
+                };
 
                 self.connection.write_response(&response).await?;
                 Ok(())

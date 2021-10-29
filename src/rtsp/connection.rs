@@ -6,7 +6,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufWriter},
     net::TcpStream,
 };
-use tracing::trace;
+use tracing::{instrument, trace};
 
 /// Send and receive `Message` values from a remote peer.
 ///
@@ -43,8 +43,7 @@ impl Connection {
 
         Ok(Connection {
             stream: BufWriter::new(socket),
-            // Default to a 4KB read buffer.
-            buffer: BytesMut::with_capacity(4 * 1024),
+            buffer: BytesMut::with_capacity(1024),
 
             local_addr: local_addr,
             peer_addr: peer_addr,
@@ -62,6 +61,7 @@ impl Connection {
     /// On success, the received message is returned. If the `TcpStream`
     /// is closed in a way that doesn't break a message in half, it returns
     /// `None`. Otherwise, an error is returned.
+    #[instrument(skip(self))]
     pub async fn read_message(&mut self) -> Result<Option<Message<Vec<u8>>>> {
         loop {
             // Attempt to parse a message from the buffered data. If enough data
@@ -87,6 +87,32 @@ impl Connection {
                 }
             }
         }
+    }
+
+    /// Write a single `Response` value to the underlying stream.
+    ///
+    /// The `Response` value is written to the socket using the various `write_*`
+    /// functions provided by `AsyncWrite`. Calling these functions directly on
+    /// a `TcpStream` is **not** advised, as this will result in a large number of
+    /// syscalls. However, it is fine to call these functions on a *buffered*
+    /// write stream. The data will be written to the buffer. Once the buffer is
+    /// full, it is flushed to the underlying socket.
+    #[instrument(skip(self))]
+    pub async fn write_response<B: AsRef<[u8]> + Debug>(
+        &mut self,
+        response: &Response<B>,
+    ) -> crate::Result<()> {
+        trace!("{:?}", response);
+
+        let mut buffer = Vec::new();
+        response.write(&mut buffer)?;
+        self.stream.write_all(&buffer).await?;
+
+        // Ensure the encoded message is written to the socket. The calls above
+        // are to the buffered stream and writes. Calling `flush` writes the
+        // remaining contents of the buffer to the socket.
+        self.stream.flush().await?;
+        Ok(())
     }
 
     /// Tries to parse a message from the buffer. If the buffer contains enough
@@ -115,30 +141,5 @@ impl Connection {
             // in the connection being closed.
             Err(e) => Err(e.into()),
         }
-    }
-
-    /// Write a single `Response` value to the underlying stream.
-    ///
-    /// The `Response` value is written to the socket using the various `write_*`
-    /// functions provided by `AsyncWrite`. Calling these functions directly on
-    /// a `TcpStream` is **not** advised, as this will result in a large number of
-    /// syscalls. However, it is fine to call these functions on a *buffered*
-    /// write stream. The data will be written to the buffer. Once the buffer is
-    /// full, it is flushed to the underlying socket.
-    pub async fn write_response<B: AsRef<[u8]> + Debug>(
-        &mut self,
-        response: &Response<B>,
-    ) -> crate::Result<()> {
-        trace!("{:?}", response);
-
-        let mut buffer = Vec::new();
-        response.write(&mut buffer)?;
-        self.stream.write_all(&buffer).await?;
-
-        // Ensure the encoded message is written to the socket. The calls above
-        // are to the buffered stream and writes. Calling `flush` writes the
-        // remaining contents of the buffer to the socket.
-        self.stream.flush().await?;
-        Ok(())
     }
 }
