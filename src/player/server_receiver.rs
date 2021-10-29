@@ -42,7 +42,6 @@ impl ServerReceiver {
 
             match rtp_rs::RtpReader::new(&buf[..length]) {
                 Ok(reader) => {
-                    trace!("{:?}", reader);
                     let seq = reader.sequence_number();
                     let packet = reader.payload().to_vec();
 
