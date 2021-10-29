@@ -30,7 +30,7 @@ use tokio::{
         mpsc, oneshot,
     },
 };
-use tracing::{debug, error, trace};
+use tracing::error;
 
 #[derive(Debug)]
 pub(crate) struct Encryption {
@@ -127,7 +127,7 @@ impl Player {
                 None => return Ok(()),
             };
 
-            debug!("{:?}", request);
+            // trace!("{:?}", request);
             match request {
                 Command::Announce { payload, resp } => {
                     encryption = payload.encryption;
@@ -225,7 +225,7 @@ impl Player {
 
                     let _ = resp.send(Ok(()));
                 }
-                Command::PutPacket { seq, packet } => match (encryption.take(), cipher.take()) {
+                Command::PutPacket { seq: _, packet } => match (encryption.take(), cipher.take()) {
                     (Some(enc), Some(ci)) => {
                         let iv = GenericArray::from_slice(&enc.aesiv);
                         let mut buffer = packet.clone();
@@ -245,7 +245,7 @@ impl Player {
                                 let mut out = vec![0; max_samples as usize];
                                 let result = decoder.decode_packet(&result, &mut out).unwrap();
 
-                                trace!("decoded: {:?} - {:?}", seq, result);
+                                // trace!("decoded: {:?} - {:?}", seq, result);
 
                                 let source = SamplesBuffer::new(
                                     2,

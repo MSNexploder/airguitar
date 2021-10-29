@@ -17,7 +17,7 @@ impl TimingSender {
     pub(crate) async fn run(&mut self) -> crate::Result<()> {
         while !self.shutdown.is_shutdown() {
             tokio::select! {
-                _ = time::sleep(Duration::from_secs(1)) => { // 3
+                _ = time::sleep(Duration::from_secs(3)) => {
                   let message = [0x80, 0xd2, 0x0, 0x07, 0x0, 0x0, 0x0, 0x0,
                                     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
                                     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
