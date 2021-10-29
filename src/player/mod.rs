@@ -61,6 +61,11 @@ pub(crate) struct SetupResponse {
 }
 
 #[derive(Debug)]
+pub(crate) struct GetParameterResponse {
+    pub(crate) volume: f64,
+}
+
+#[derive(Debug)]
 pub(crate) enum Command {
     // RTSP
     Announce {
@@ -73,6 +78,12 @@ pub(crate) enum Command {
     },
     Teardown {
         resp: oneshot::Sender<Result<()>>,
+    },
+    SetParameter {
+        volume: f64,
+    },
+    GetParameter {
+        resp: oneshot::Sender<GetParameterResponse>,
     },
 
     // Internal
@@ -102,6 +113,7 @@ pub(crate) struct Player {
 
 impl Player {
     pub(crate) async fn run(&mut self) -> crate::Result<()> {
+        let mut airplay_volume = 0.0;
         let mut _notify_shutdown: Option<Sender<()>> = None;
         let mut encryption: Option<Encryption> = None;
         let mut cipher: Option<Aes128> = None;
@@ -224,6 +236,12 @@ impl Player {
                     alac = None;
 
                     let _ = resp.send(Ok(()));
+                }
+                Command::SetParameter { volume: vol } => {
+                    airplay_volume = vol;
+                }
+                Command::GetParameter { resp } => {
+                    let _ = resp.send(GetParameterResponse { volume: airplay_volume });
                 }
                 Command::PutPacket { seq: _, packet } => match (encryption.take(), cipher.take()) {
                     (Some(enc), Some(ci)) => {

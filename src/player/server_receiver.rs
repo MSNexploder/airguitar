@@ -2,7 +2,7 @@ use super::Command;
 use crate::shutdown::Shutdown;
 use std::sync::Arc;
 use tokio::{net::UdpSocket, sync::mpsc};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, instrument};
 
 #[derive(Debug)]
 pub(crate) struct ServerReceiver {
@@ -19,7 +19,6 @@ impl ServerReceiver {
         while !self.shutdown.is_shutdown() {
             let length = tokio::select! {
                 result = self.socket.recv_from(&mut buf) => {
-                  trace!("{:?}", result);
                   match result {
                       Ok((length, _)) => {
                         if length == 0 {
