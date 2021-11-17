@@ -81,6 +81,7 @@ pub(crate) enum Command {
     },
     SetParameter {
         volume: f64,
+        resp: oneshot::Sender<Result<()>>,
     },
     GetParameter {
         resp: oneshot::Sender<GetParameterResponse>,
@@ -237,11 +238,14 @@ impl Player {
 
                     let _ = resp.send(Ok(()));
                 }
-                Command::SetParameter { volume: vol } => {
+                Command::SetParameter { volume: vol, resp } => {
                     airplay_volume = vol;
+                    let _ = resp.send(Ok(()));
                 }
                 Command::GetParameter { resp } => {
-                    let _ = resp.send(GetParameterResponse { volume: airplay_volume });
+                    let _ = resp.send(GetParameterResponse {
+                        volume: airplay_volume,
+                    });
                 }
                 Command::PutPacket { seq: _, packet } => match (encryption.take(), cipher.take()) {
                     (Some(enc), Some(ci)) => {

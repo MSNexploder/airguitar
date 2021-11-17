@@ -243,9 +243,14 @@ impl Handler {
                             match line.split_once(":") {
                                 Some(("volume", volume)) => {
                                     let vol = volume.trim().parse::<f64>()?;
+                                    let (tx, rx) = oneshot::channel();
                                     self.player_tx
-                                        .send(Command::SetParameter { volume: vol })
+                                        .send(Command::SetParameter {
+                                            volume: vol,
+                                            resp: tx,
+                                        })
                                         .await?;
+                                    let _ = rx.await?;
                                 }
                                 _ => {}
                             }
