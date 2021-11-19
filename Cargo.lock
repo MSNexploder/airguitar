@@ -26,6 +26,7 @@ dependencies = [
  "clap",
  "libmdns",
  "md-5",
+ "nom 7.1.0",
  "once_cell",
  "rand",
  "rodio",

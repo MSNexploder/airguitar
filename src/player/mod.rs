@@ -1,13 +1,18 @@
 mod control_receiver;
+mod frame_buffer;
 mod server_receiver;
 mod timing_receiver;
 mod timing_sender;
 
 use crate::{
     player::{
-        control_receiver::ControlReceiver, server_receiver::ServerReceiver,
-        timing_receiver::TimingReceiver, timing_sender::TimingSender,
+        control_receiver::ControlReceiver,
+        frame_buffer::{FrameBuffer, FrameBufferSource},
+        server_receiver::ServerReceiver,
+        timing_receiver::TimingReceiver,
+        timing_sender::TimingSender,
     },
+    rtp_info::RtpInfo,
     shutdown::Shutdown,
     Result,
 };
@@ -17,11 +22,11 @@ use block_modes::{
     block_padding::{Padding, ZeroPadding},
     BlockMode, Cbc,
 };
-use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
+use rodio::{OutputStream, Sink};
 use rtp_rs::Seq;
 use std::{
     net::{IpAddr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 use tokio::{
     net::UdpSocket,
@@ -76,6 +81,10 @@ pub(crate) enum Command {
         payload: Setup,
         resp: oneshot::Sender<Result<SetupResponse>>,
     },
+    Record {
+        payload: RtpInfo,
+        resp: oneshot::Sender<Result<()>>,
+    },
     Teardown {
         resp: oneshot::Sender<Result<()>>,
     },
@@ -119,6 +128,7 @@ impl Player {
         let mut encryption: Option<Encryption> = None;
         let mut cipher: Option<Aes128> = None;
         let mut alac: Option<Decoder> = None;
+        let mut frame_buffer: Option<Arc<Mutex<FrameBuffer<i16>>>> = None;
 
         let (_stream, stream_handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&stream_handle).unwrap();
@@ -230,6 +240,16 @@ impl Player {
                         server_port: s_port,
                     }));
                 }
+                Command::Record { payload, resp } => {
+                    let inner_frame_buffer =
+                        Arc::new(Mutex::new(FrameBuffer::<i16>::new(payload.seq.into())));
+                    let source = FrameBufferSource::new(inner_frame_buffer.clone(), 2, 44100);
+                    sink.append(source);
+
+                    frame_buffer = Some(inner_frame_buffer);
+
+                    let _ = resp.send(Ok(()));
+                }
                 Command::Teardown { resp } => {
                     _notify_shutdown = None;
                     encryption = None;
@@ -247,7 +267,7 @@ impl Player {
                         volume: airplay_volume,
                     });
                 }
-                Command::PutPacket { seq: _, packet } => match (encryption.take(), cipher.take()) {
+                Command::PutPacket { seq, packet } => match (encryption.take(), cipher.take()) {
                     (Some(enc), Some(ci)) => {
                         let iv = GenericArray::from_slice(&enc.aesiv);
                         let mut buffer = packet.clone();
@@ -269,15 +289,14 @@ impl Player {
 
                                 // trace!("decoded: {:?} - {:?}", seq, result);
 
-                                let source = SamplesBuffer::new(
-                                    2,
-                                    44100,
-                                    result
-                                        .iter()
-                                        .map(|i| (i >> 16) as i16)
-                                        .collect::<Vec<i16>>(),
-                                );
-                                sink.append(source);
+                                let data = result
+                                    .iter()
+                                    .map(|i| (i >> 16) as i16)
+                                    .collect::<Vec<i16>>();
+                                if let Some(ref frame_buffer) = frame_buffer {
+                                    let mut locked_frame_buffer = frame_buffer.lock().unwrap();
+                                    locked_frame_buffer.add_packet(seq, data.into_iter());
+                                }
                             }
                             None => todo!(),
                         }

@@ -1,6 +1,7 @@
 mod base64;
 mod mdns;
 mod player;
+mod rtp_info;
 mod rtsp;
 mod server;
 mod shutdown;
