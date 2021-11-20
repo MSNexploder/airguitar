@@ -95,6 +95,10 @@ pub(crate) enum Command {
     GetParameter {
         resp: oneshot::Sender<GetParameterResponse>,
     },
+    Flush {
+        payload: RtpInfo,
+        resp: oneshot::Sender<Result<()>>,
+    },
 
     // Internal
     PutPacket {
@@ -266,6 +270,14 @@ impl Player {
                     let _ = resp.send(GetParameterResponse {
                         volume: airplay_volume,
                     });
+                }
+                Command::Flush { payload, resp } => {
+                    if let Some(ref frame_buffer) = frame_buffer {
+                        let mut locked_frame_buffer = frame_buffer.lock().unwrap();
+                        locked_frame_buffer.flush(payload.seq.into());
+                    }
+
+                    let _ = resp.send(Ok(()));
                 }
                 Command::PutPacket { seq, packet } => match (encryption.take(), cipher.take()) {
                     (Some(enc), Some(ci)) => {

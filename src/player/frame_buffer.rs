@@ -26,17 +26,28 @@ where
         }
     }
 
-    fn pop_front(&mut self) -> Option<std::vec::IntoIter<S>> {
-        // trace!("packet popped");
-        let data = self.data.remove(&self.read_marker);
-        self.read_marker = self.read_marker.next();
-        data
-    }
-
     pub(crate) fn add_packet(&mut self, seq: Seq, packet: std::vec::IntoIter<S>) {
         // trace!("packet added with seq {:?}", seq);
         self.write_marker = seq;
         self.data.insert(seq, packet);
+    }
+
+    pub(crate) fn flush(&mut self, seq: Seq) {
+        // move read marker to requested Seq
+        // and remove all entries up until, but without requested Seq
+        while self.read_marker != seq {
+            self.data.remove(&self.read_marker);
+            self.read_marker = self.read_marker.next();
+        }
+    }
+
+    fn pop_front(&mut self) -> Option<std::vec::IntoIter<S>> {
+        // trace!("packet popped");
+        let data = self.data.remove(&self.read_marker);
+        if data.is_some() {
+            self.read_marker = self.read_marker.next();
+        }
+        data
     }
 }
 

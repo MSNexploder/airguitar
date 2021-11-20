@@ -395,8 +395,25 @@ impl Handler {
             }
             Method::Extension(extension) => match extension.as_str() {
                 "FLUSH" | "flush" => {
+                    let rtp_header = request.header(&headers::RTP_INFO);
                     let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
                     let response = self.add_default_headers(request, response_builder)?.empty();
+
+                    if let Some(value) = rtp_header {
+                        match RtpInfo::parse(value.as_str()) {
+                            Ok((_, info)) => {
+                                let (tx, rx) = oneshot::channel();
+                                self.player_tx
+                                    .send(Command::Flush {
+                                        resp: tx,
+                                        payload: info,
+                                    })
+                                    .await?;
+                                let _ = rx.await?;
+                            }
+                            Err(_) => {}
+                        }
+                    }
 
                     self.connection.write_response(&response).await?;
                     Ok(())
