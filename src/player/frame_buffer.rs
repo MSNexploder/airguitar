@@ -2,12 +2,14 @@ use rodio::{Sample, Source};
 use rtp_rs::Seq;
 use std::{
     collections::BTreeMap,
+    ops::Range,
     sync::{Arc, Mutex},
     time::Duration,
+    vec::IntoIter,
 };
 
 pub(crate) struct FrameBuffer<S> {
-    data: BTreeMap<Seq, std::vec::IntoIter<S>>,
+    data: BTreeMap<Seq, IntoIter<S>>,
 
     read_marker: Seq,
     write_marker: Seq,
@@ -26,10 +28,16 @@ where
         }
     }
 
-    pub(crate) fn add_packet(&mut self, seq: Seq, packet: std::vec::IntoIter<S>) {
+    pub(crate) fn add_packet(&mut self, seq: Seq, packet: IntoIter<S>) -> Range<Seq> {
         // trace!("packet added with seq {:?}", seq);
+        let old_write_marker = self.write_marker;
         self.write_marker = seq;
         self.data.insert(seq, packet);
+
+        Range {
+            start: old_write_marker.next(),
+            end: seq,
+        }
     }
 
     pub(crate) fn flush(&mut self, seq: Seq) {
@@ -41,7 +49,7 @@ where
         }
     }
 
-    fn pop_front(&mut self) -> Option<std::vec::IntoIter<S>> {
+    fn pop_front(&mut self) -> Option<IntoIter<S>> {
         // trace!("packet popped");
         let data = self.data.remove(&self.read_marker);
         if data.is_some() {
@@ -56,7 +64,7 @@ pub(crate) struct FrameBufferSource<S> {
     channels: u16,
     sample_rate: u32,
 
-    current: Option<std::vec::IntoIter<S>>,
+    current: Option<IntoIter<S>>,
 }
 
 impl<S> FrameBufferSource<S>

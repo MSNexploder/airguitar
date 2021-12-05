@@ -1,4 +1,5 @@
 mod control_receiver;
+mod control_sender;
 mod frame_buffer;
 mod server_receiver;
 mod timing_receiver;
@@ -7,6 +8,7 @@ mod timing_sender;
 use crate::{
     player::{
         control_receiver::ControlReceiver,
+        control_sender::{ControlSender, ControlSenderCommand},
         frame_buffer::{FrameBuffer, FrameBufferSource},
         server_receiver::ServerReceiver,
         timing_receiver::TimingReceiver,
@@ -133,6 +135,7 @@ impl Player {
         let mut cipher: Option<Aes128> = None;
         let mut alac: Option<Decoder> = None;
         let mut frame_buffer: Option<Arc<Mutex<FrameBuffer<i16>>>> = None;
+        let mut control_tx: Option<mpsc::Sender<ControlSenderCommand>> = None;
 
         let (_stream, stream_handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&stream_handle).unwrap();
@@ -198,6 +201,15 @@ impl Player {
                         shutdown: Shutdown::new(notify_shutdown_sender.subscribe()),
                     };
 
+                    let (control_server_tx, control_server_rx) = mpsc::channel(4);
+                    let mut control_sender = ControlSender {
+                        control_server_rx: control_server_rx,
+                        socket: c_sock.clone(),
+                        shutdown: Shutdown::new(notify_shutdown_sender.subscribe()),
+                    };
+
+                    control_tx = Some(control_server_tx);
+
                     let mut control_receiver = ControlReceiver {
                         socket: c_sock.clone(),
                         player_tx: self.player_tx.clone(),
@@ -220,6 +232,13 @@ impl Player {
                     tokio::spawn(async move {
                         // Process the connection. If an error is encountered, log it.
                         if let Err(err) = timing_receiver.run().await {
+                            error!(cause = ?err, "connection error");
+                        }
+                    });
+
+                    tokio::spawn(async move {
+                        // Process the connection. If an error is encountered, log it.
+                        if let Err(err) = control_sender.run().await {
                             error!(cause = ?err, "connection error");
                         }
                     });
@@ -307,7 +326,18 @@ impl Player {
                                     .collect::<Vec<i16>>();
                                 if let Some(ref frame_buffer) = frame_buffer {
                                     let mut locked_frame_buffer = frame_buffer.lock().unwrap();
-                                    locked_frame_buffer.add_packet(seq, data.into_iter());
+                                    let missing_seqs =
+                                        locked_frame_buffer.add_packet(seq, data.into_iter());
+
+                                    if !missing_seqs.is_empty() {
+                                        if let Some(ref control_tx) = control_tx {
+                                            let _ = control_tx
+                                                .send(ControlSenderCommand::MissingSeqs {
+                                                    seqs: missing_seqs,
+                                                })
+                                                .await?;
+                                        }
+                                    }
                                 }
                             }
                             None => todo!(),

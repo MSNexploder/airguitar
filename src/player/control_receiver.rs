@@ -2,7 +2,7 @@ use super::Command;
 use crate::shutdown::Shutdown;
 use std::sync::Arc;
 use tokio::{net::UdpSocket, sync::mpsc};
-use tracing::{instrument, trace};
+use tracing::{debug, instrument, trace};
 
 #[derive(Debug)]
 pub(crate) struct ControlReceiver {
@@ -40,7 +40,32 @@ impl ControlReceiver {
                 }
             };
 
-            trace!("{:?}", length);
+            match rtp_rs::RtpReader::new(&buf[..length]) {
+                Ok(reader) if reader.payload_type() == 84 => {
+                    trace!("{:?}", reader.sequence_number());
+                }
+                Ok(reader) if reader.payload_type() == 86 => {
+                    // rtp reader expects `SSRC` field atm and interprets original seq as `SSRC`
+                    // pull out seq + audio packet data directly from our buffer
+                    let seq = (buf[6] as u16) << 8 | (buf[7] as u16);
+                    let packet = buf[16..length].to_vec();
+
+                    trace!("{:?}", seq);
+
+                    self.player_tx
+                        .send(Command::PutPacket {
+                            seq: seq.into(),
+                            packet: packet,
+                        })
+                        .await?
+                }
+                Ok(_) => {
+                    trace!("unknown payload type");
+                }
+                Err(e) => {
+                    debug!("{:?}", e);
+                }
+            };
         }
 
         Ok(())
