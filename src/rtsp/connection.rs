@@ -1,4 +1,4 @@
-use crate::Result;
+use crate::result::Result;
 use bytes::{Buf, BytesMut};
 use rtsp_types::{Message, ParseError, Response};
 use std::{fmt::Debug, net::SocketAddr};
@@ -101,7 +101,7 @@ impl Connection {
     pub async fn write_response<B: AsRef<[u8]> + Debug>(
         &mut self,
         response: &Response<B>,
-    ) -> crate::Result<()> {
+    ) -> crate::result::Result<()> {
         trace!("{:?}", response);
 
         let mut buffer = Vec::new();

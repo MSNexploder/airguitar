@@ -24,7 +24,7 @@ pub(crate) struct Mdns {
 }
 
 impl Mdns {
-    pub(crate) async fn run(&mut self) -> crate::Result<()> {
+    pub(crate) async fn run(&mut self) -> crate::result::Result<()> {
         let hw_addr = self
             .config
             .hw_addr

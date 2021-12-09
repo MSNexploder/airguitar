@@ -1,6 +1,8 @@
 mod base64;
+mod error;
 mod mdns;
 mod player;
+mod result;
 mod rtp_info;
 mod rtsp;
 mod server;
@@ -13,7 +15,7 @@ use tokio::{net::TcpListener, signal};
 use tracing_subscriber;
 
 #[tokio::main]
-async fn main() -> crate::Result<()> {
+async fn main() -> crate::result::Result<()> {
     tracing_subscriber::fmt::try_init()?;
 
     let cli_opts = CliOpts::parse();
@@ -53,18 +55,3 @@ pub(crate) struct Configuration {
     name: String,
     hw_addr: [u8; 6],
 }
-
-/// Error returned by most functions.
-///
-/// Maybe consider a specialized error handling crate or defining an error
-/// type as an `enum` of causes.
-/// However, for our example, using a boxed `std::error::Error` is sufficient.
-///
-/// For performance reasons, boxing is avoided in any hot path. For example, in
-/// `parse`, a custom error `enum` is defined. This is because the error is hit
-/// and handled during normal execution when a partial message is received on a
-/// socket. `std::error::Error` is implemented for `parse::Error` which allows
-/// it to be converted to `Box<dyn std::error::Error>`.
-pub(crate) type Error = Box<dyn std::error::Error + Send + Sync>;
-
-pub(crate) type Result<T> = std::result::Result<T, Error>;

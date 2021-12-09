@@ -1,6 +1,6 @@
 use base64ct::{Base64Unpadded, Encoding};
 
-pub(crate) fn decode_base64(input: &str) -> crate::Result<Vec<u8>> {
+pub(crate) fn decode_base64(input: &str) -> crate::result::Result<Vec<u8>> {
     // Apple sometimes uses padded Base64 (e.g. Music App on iOS)
     // and sometimes removes the padding (e.g. Music App on macOS)
     // ¯\_(ツ)_/¯

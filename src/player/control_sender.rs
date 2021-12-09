@@ -19,7 +19,7 @@ pub(crate) struct ControlSender {
 
 impl ControlSender {
     #[instrument(skip(self))]
-    pub(crate) async fn run(&mut self) -> crate::Result<()> {
+    pub(crate) async fn run(&mut self) -> crate::result::Result<()> {
         while !self.shutdown.is_shutdown() {
             let maybe_request = tokio::select! {
               res = self.control_server_rx.recv() => {

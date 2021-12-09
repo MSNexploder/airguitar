@@ -14,7 +14,7 @@ pub(crate) struct ControlReceiver {
 
 impl ControlReceiver {
     #[instrument(skip(self))]
-    pub(crate) async fn run(&mut self) -> crate::Result<()> {
+    pub(crate) async fn run(&mut self) -> crate::result::Result<()> {
         let mut buf = [0; 4 * 1024];
         while !self.shutdown.is_shutdown() {
             let length = tokio::select! {

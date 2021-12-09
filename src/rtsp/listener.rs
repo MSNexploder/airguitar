@@ -61,7 +61,7 @@ impl Listener {
     /// The process is not able to detect when a transient error resolves
     /// itself. One strategy for handling this is to implement a back off
     /// strategy, which is what we do here.
-    pub(crate) async fn run(&mut self) -> crate::Result<()> {
+    pub(crate) async fn run(&mut self) -> crate::result::Result<()> {
         loop {
             // Accept a new socket. This will attempt to perform error handling.
             // The `accept` method internally attempts to recover errors, so an
@@ -102,7 +102,7 @@ impl Listener {
     /// After the second failure, the task waits for 2 seconds. Each subsequent
     /// failure doubles the wait time. If accepting fails on the 4th try after
     /// waiting for 16 seconds, then this function returns with an error.
-    async fn accept(&mut self) -> crate::Result<TcpStream> {
+    async fn accept(&mut self) -> crate::result::Result<TcpStream> {
         let mut backoff = 1;
 
         // Try to accept a few times

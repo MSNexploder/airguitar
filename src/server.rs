@@ -12,7 +12,7 @@ pub(crate) async fn run(
     config: Arc<Configuration>,
     listener: TcpListener,
     shutdown: impl Future,
-) -> crate::Result<()> {
+) -> crate::result::Result<()> {
     let local_addr = listener.local_addr()?;
 
     let (notify_shutdown, _) = broadcast::channel(1);

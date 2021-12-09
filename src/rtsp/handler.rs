@@ -60,7 +60,7 @@ impl Handler {
     /// When the shutdown signal is received, the connection is processed until
     /// it reaches a safe state, at which point it is terminated.
     #[instrument(skip(self))]
-    pub(crate) async fn run(&mut self) -> crate::Result<()> {
+    pub(crate) async fn run(&mut self) -> crate::result::Result<()> {
         // As long as the shutdown signal has not been received, try to read a
         // new request message.
         while !self.shutdown.is_shutdown() {
@@ -91,7 +91,7 @@ impl Handler {
     }
 
     // TODO on error we should send send a response anyways (e.g. with status code ParameterNotUnderstood)
-    async fn execute(&mut self, request: &Request<Vec<u8>>) -> crate::Result<()> {
+    async fn execute(&mut self, request: &Request<Vec<u8>>) -> crate::result::Result<()> {
         match request.method() {
             Method::Options => {
                 let response_builder = Response::builder(Version::V1_0, StatusCode::Ok);
@@ -439,7 +439,7 @@ impl Handler {
         &self,
         request: &Request<Vec<u8>>,
         mut response_builder: ResponseBuilder,
-    ) -> crate::Result<ResponseBuilder> {
+    ) -> crate::result::Result<ResponseBuilder> {
         response_builder = response_builder.header(headers::SERVER, "AirTunes/105.1"); // TODO check if we can use Airguitar here
 
         if let Some(c_seq) = request.header(&headers::CSEQ) {
@@ -455,7 +455,7 @@ impl Handler {
         Ok(response_builder)
     }
 
-    fn calculate_challenge(&self, challenge: &str) -> crate::Result<String> {
+    fn calculate_challenge(&self, challenge: &str) -> crate::result::Result<String> {
         let chall = decode_base64(challenge)?;
         let addr = match self.connection.local_addr.ip() {
             IpAddr::V4(ip) => ip.octets().to_vec(),

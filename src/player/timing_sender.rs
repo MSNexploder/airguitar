@@ -14,7 +14,7 @@ pub(crate) struct TimingSender {
 
 impl TimingSender {
     #[instrument(skip(self))]
-    pub(crate) async fn run(&mut self) -> crate::Result<()> {
+    pub(crate) async fn run(&mut self) -> crate::result::Result<()> {
         while !self.shutdown.is_shutdown() {
             tokio::select! {
                 _ = time::sleep(Duration::from_secs(3)) => {

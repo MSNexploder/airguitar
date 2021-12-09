@@ -14,9 +14,9 @@ use crate::{
         timing_receiver::TimingReceiver,
         timing_sender::TimingSender,
     },
+    result::Result,
     rtp_info::RtpInfo,
     shutdown::Shutdown,
-    Result,
 };
 use aes::{cipher::generic_array::GenericArray, Aes128, NewBlockCipher};
 use alac::{Decoder, StreamInfo};
@@ -128,7 +128,7 @@ pub(crate) struct Player {
 }
 
 impl Player {
-    pub(crate) async fn run(&mut self) -> crate::Result<()> {
+    pub(crate) async fn run(&mut self) -> crate::result::Result<()> {
         let mut airplay_volume = 0.0;
         let mut _notify_shutdown: Option<Sender<()>> = None;
         let mut encryption: Option<Encryption> = None;
