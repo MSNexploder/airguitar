@@ -1,6 +1,7 @@
 mod control_receiver;
 mod control_sender;
 mod frame_buffer;
+mod ntp;
 mod server_receiver;
 mod timing_receiver;
 mod timing_sender;

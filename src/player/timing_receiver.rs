@@ -1,5 +1,5 @@
 use super::Command;
-use crate::shutdown::Shutdown;
+use crate::{player::ntp::Time, shutdown::Shutdown};
 use std::sync::Arc;
 use tokio::{net::UdpSocket, sync::mpsc};
 use tracing::{debug, instrument, trace};
@@ -56,20 +56,20 @@ impl TimingReceiver {
                     let seq = reader.sequence_number();
                     // rtp reader expects `SSRC` field atm and interprets half of the first timestamp as `SSRC`
                     // pull out timestamp data directly from our buffer
-                    let origin = Timestamp {
+                    let origin = Time {
                         sec: u32::from_be_bytes(buf[8..12].try_into().unwrap()),
                         frac: u32::from_be_bytes(buf[12..16].try_into().unwrap()),
                     };
-                    let receive = Timestamp {
+                    let receive = Time {
                         sec: u32::from_be_bytes(buf[16..20].try_into().unwrap()),
                         frac: u32::from_be_bytes(buf[20..24].try_into().unwrap()),
                     };
-                    let transmit = Timestamp {
+                    let transmit = Time {
                         sec: u32::from_be_bytes(buf[24..28].try_into().unwrap()),
                         frac: u32::from_be_bytes(buf[28..32].try_into().unwrap()),
                     };
 
-                    trace!("{:?} - {:?}-{:?}-{:?}", seq, origin, receive, transmit,);
+                    trace!("{:?} - {:?}-{:?}-{:?}", seq, origin, receive, transmit);
                 }
                 Err(e) => {
                     debug!("{:?}", e);
@@ -79,10 +79,4 @@ impl TimingReceiver {
 
         Ok(())
     }
-}
-
-#[derive(Debug)]
-struct Timestamp {
-    sec: u32,
-    frac: u32,
 }

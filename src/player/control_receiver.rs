@@ -1,5 +1,5 @@
 use super::Command;
-use crate::shutdown::Shutdown;
+use crate::{player::ntp::Time, shutdown::Shutdown};
 use std::sync::Arc;
 use tokio::{net::UdpSocket, sync::mpsc};
 use tracing::{debug, instrument, trace};
@@ -42,15 +42,22 @@ impl ControlReceiver {
 
             match rtp_rs::RtpReader::new(&buf[..length]) {
                 Ok(reader) if reader.payload_type() == 84 => {
-                    trace!("{:?}", reader.sequence_number());
+                    let seq = reader.sequence_number();
+                    // rtp reader expects `SSRC` field atm and interprets half of the first timestamp as `SSRC`
+                    // pull out timestamp data directly from our buffer
+                    let time = Time {
+                        sec: u32::from_be_bytes(buf[8..12].try_into().unwrap()),
+                        frac: u32::from_be_bytes(buf[12..16].try_into().unwrap()),
+                    };
+                    let timestamp = u32::from_be_bytes(buf[16..20].try_into().unwrap());
+
+                    trace!("{:?} - {:?}-{:?}", seq, time, timestamp);
                 }
                 Ok(reader) if reader.payload_type() == 86 => {
                     // rtp reader expects `SSRC` field atm and interprets original seq as `SSRC`
                     // pull out seq + audio packet data directly from our buffer
                     let seq = (buf[6] as u16) << 8 | (buf[7] as u16);
                     let packet = buf[16..length].to_vec();
-
-                    trace!("{:?}", seq);
 
                     self.player_tx
                         .send(Command::PutPacket {
