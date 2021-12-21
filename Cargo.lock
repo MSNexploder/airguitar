@@ -103,9 +103,9 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
 name = "base64ct"
-version = "1.3.0"
+version = "1.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a46022bae2c3bc5a17c2d45d59c1233ce0e2cca9ae9b92e92e9ce529874177"
+checksum = "a30f9c631ae8b97868a2e841015b72f2c99b05e3f03a14d543b843816a0a5b4d"
 
 [[package]]
 name = "bindgen"
