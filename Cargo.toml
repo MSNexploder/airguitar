@@ -12,7 +12,7 @@ alac = { version = "0.5", default-features = false }
 base64ct = {version = "1.5", features = ["alloc", "std"] }
 block-modes = "0.8"
 bytes = "1.1"
-clap = { version = "3.1.12", features = ["cargo", "derive", "unicode"] }
+clap = { version = "3.1.18", features = ["cargo", "derive", "unicode"] }
 libmdns = "0.6"
 md-5 = "0.9"
 nom = "7.1"
@@ -24,7 +24,7 @@ rtp-rs = "0.6"
 rtsp-types = "0.0.3"
 sha-1 = "0.9"
 sdp-types = "0.1"
-tokio = { version = "1.17", features = ["full"] }
+tokio = { version = "1.18", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-futures = "0.2"
