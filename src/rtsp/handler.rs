@@ -7,7 +7,7 @@ use crate::{
     Configuration,
 };
 use once_cell::sync::Lazy;
-use rsa::{pkcs1::FromRsaPrivateKey, PaddingScheme, RsaPrivateKey};
+use rsa::{pkcs1::DecodeRsaPrivateKey, PaddingScheme, RsaPrivateKey};
 use rtsp_types::{
     headers::{
         self, RtpLowerTransport, RtpProfile, RtpTransport, RtpTransportParameters, Transport,

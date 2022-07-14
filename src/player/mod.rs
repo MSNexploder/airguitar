@@ -19,12 +19,16 @@ use crate::{
     rtp_info::RtpInfo,
     shutdown::Shutdown,
 };
-use aes::{cipher::generic_array::GenericArray, Aes128, NewBlockCipher};
-use alac::{Decoder, StreamInfo};
-use block_modes::{
-    block_padding::{Padding, ZeroPadding},
-    BlockMode, Cbc,
+use aes::{
+    cipher::block_padding::ZeroPadding,
+    cipher::{
+        block_padding::Padding, generic_array::typenum::U16, generic_array::GenericArray,
+        BlockDecryptMut,
+    },
+    cipher::{InnerIvInit, KeyInit},
+    Aes128,
 };
+use alac::{Decoder, StreamInfo};
 use rodio::{OutputStream, Sink};
 use rtp_rs::Seq;
 use std::{
@@ -39,6 +43,8 @@ use tokio::{
     },
 };
 use tracing::error;
+
+type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
 #[derive(Debug)]
 pub(crate) struct Encryption {
@@ -307,10 +313,12 @@ impl Player {
                         let len = packet.len();
                         let aeslen = len & !0xf;
 
-                        let mut buffer = ZeroPadding::pad(&mut buffer, len, 16).unwrap();
-                        let decrypter = Cbc::<&Aes128, ZeroPadding>::new(&ci, &iv);
+                        let be = (16 * (len / 16)) + 16;
+                        let decrypter = Aes128CbcDec::inner_iv_init(ci.clone(), &iv);
+                        let mut result = decrypter
+                            .decrypt_padded_vec_mut::<ZeroPadding>(&buffer[..be])
+                            .unwrap();
 
-                        let mut result = decrypter.decrypt(&mut buffer).unwrap().to_vec();
                         result[aeslen..len].copy_from_slice(&packet[aeslen..len]);
 
                         match alac {
