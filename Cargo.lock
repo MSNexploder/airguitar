@@ -680,9 +680,9 @@ checksum = "292a948cd991e376cf75541fe5b97a1081d713c618b4f1b9500f8844e49eb565"
 
 [[package]]
 name = "libmdns"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6fb7fd715150e59e9a74049d2b50e862c3959c139b95eea132a66ddae20c3d9"
+checksum = "db06ff31e241ee1a4371af351377df09815c8e48dfd2eb778a2f75bc506fa539"
 dependencies = [
  "byteorder",
  "futures-util",
