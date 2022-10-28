@@ -21,7 +21,7 @@ rand = "0.8"
 rodio = { version = "0.16", default-features = false }
 rsa = "0.6"
 rtp-rs = "0.6"
-rtsp-types = "0.0.3"
+rtsp-types = "0.0.4"
 sha-1 = "0.10"
 sdp-types = "0.1"
 tokio = { version = "1.21", features = ["full"] }
